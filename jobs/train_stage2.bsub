@@ -2,14 +2,18 @@
 #BSUB -J iws_h200                          # job name
 #BSUB -o jobs/logs/iws_mujoco.%J.out           # stdout log (submit from project root)
 #BSUB -e jobs/logs/iws_mujoco.%J.err           # stderr log
-#BSUB -n 16                                # CPU cores: 16 workers for data loading
+#BSUB -n 16                                # CPU cores: 8 workers for data loading
 #BSUB -R span[hosts=1]                     # single host
 #BSUB -M 32768MB                           # 32 GB system RAM
-#BSUB -gpu "num=1:mig=7"                         # 1× full H200 (143 GB HBM3e)
+#BSUB -gpu "num=1:mig=7"                      # 1× full H200 (143 GB HBM3e)
 #BSUB -W 12:00                             # 12-hour runtime limit
 #BSUB -q batch_h200_mig                    # H200 MIG queue (no backlog)
 #BSUB -P BH-000557-01  	                   # project to charge, AIQ-103
 #BSUB -G rb_bd_dlp_rng-dl01_cr_AIQ_employees
+
+## Alternatively
+# -q batch_h200_mig                    # H200 MIG queue 
+# -gpu "num=1:mig=7"                         # 1× full H200 (143 GB HBM3e)
 
 # ---------------------------------------------------------------------------
 # Environment setup
@@ -31,42 +35,33 @@ echo "========================"
 # Reduce CUDA memory fragmentation
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# ---------------------------------------------------------------------------
-# GPU utilization monitoring (logs every 30 s to a dedicated file)
-# ---------------------------------------------------------------------------
-nvidia-smi dmon -s upmt -d 30 > jobs/logs/gpu_util_${LSB_JOBID}.log 2>&1 &
-GPU_MON_PID=$!
-echo "GPU monitor PID: $GPU_MON_PID  →  jobs/logs/gpu_util_${LSB_JOBID}.log"
 
 # ---------------------------------------------------------------------------
-# Stage 1  (bf16-mixed + batch_size=32 for H200 utilization)
+# Stage 2  (bf16-mixed + batch_size=128 for H200 utilization)
 # ---------------------------------------------------------------------------
 cd ~/interactive_world_sim
 conda activate iws
 
-python main.py +name=pusht_stage_1 algorithm=latent_world_model \
+python main.py +name=pusht_stage_2 algorithm=latent_world_model \
   experiment=exp_latent_dyn dataset=sim_aloha_dataset \
   dataset.dataset_dir=/fs/scratch/rb_bd_dlp_rng-dl01_cr_AIQ_employees/aiq103/iws/data/mujoco \
-  dataset.horizon=1 dataset.val_horizon=1 \
+  dataset.horizon=10 dataset.val_horizon=200 \
   dataset.obs_keys=[top_pov] \
-  experiment.training.batch_size=32 \
+  experiment.training.batch_size=96 \
   experiment.training.precision=bf16-mixed \
-  experiment.training.data.num_workers=16 \
   experiment.training.max_steps=1000005 \
   experiment.training.log_every_n_steps=100 \
   experiment.validation.limit_batch=1.0 \
-  experiment.validation.batch_size=64 \
-  experiment.validation.val_every_n_step=6000 \
+  experiment.validation.batch_size=32 \
+  experiment.validation.val_every_n_step=10000 \
   experiment.validation.precision=bf16-mixed \
+  experiment.training.checkpointing.every_n_train_steps=10000 \
+  experiment.training.data.num_workers=16 \
   experiment.validation.data.num_workers=16 \
-  "algorithm.metrics=[]" \
   algorithm.latent_dim=512 algorithm.action_dim=4 \
-  algorithm.training_stage=1 \
-  "load='outputs/2026-04-17/11-13-59/checkpoints/epoch=0-step=30000.ckpt'"
+  algorithm.noise_scheduler.loss_weighting=uniform \
+  algorithm.sampling_strategy=terminal_only \
+  "algorithm.load_ae='outputs/2026-04-18/00-19-07/checkpoints/epoch=1-step=100000.ckpt'" \
+  algorithm.training_stage=2 \
+  "load='outputs/2026-04-21/22-09-12/checkpoints/epoch=2-step=60000.ckpt'"
 
-# ---------------------------------------------------------------------------
-# Cleanup
-# ---------------------------------------------------------------------------
-kill $GPU_MON_PID 2>/dev/null
-echo "=== Final GPU state ==="
-nvidia-smi
