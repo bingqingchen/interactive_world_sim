@@ -3,7 +3,7 @@ import time
 from multiprocessing.managers import SharedMemoryManager
 
 import numpy as np
-from yixuan_utilities.draw_utils import (
+from yixuan_utilities.open3d_utils import (
     aggr_point_cloud_from_data,
     np2o3d,
     o3dVisualizer,

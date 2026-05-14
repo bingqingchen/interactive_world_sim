@@ -52,7 +52,7 @@ class SingleRealsense(mp.Process):
         self,
         shm_manager: SharedMemoryManager,
         serial_number: str,
-        resolution: Tuple[int, int] = (1280, 720),
+        resolution: Tuple[int, int] = (1920, 1080),
         capture_fps: int = 30,
         put_fps: Optional[int] = None,
         put_downsample: bool = True,
@@ -408,15 +408,18 @@ class SingleRealsense(mp.Process):
 
     def calibrate_extrinsics(
         self,
-        visualize: bool = True,
+        visualize: bool = False,
         board_size: Tuple[int, int] = (6, 9),
         squareLength: float = 0.03,
         markerLength: float = 0.022,
+        output_dir: str = os.path.join(os.path.dirname(__file__), "calibration_output"),
     ) -> None:
         """Calibrate extrinsics using a ChArUco board.
 
-        Displays calibration image if visualize is True.
+        Saves calibration images to output_dir if visualize is True.
         """
+        if visualize:
+            os.makedirs(output_dir, exist_ok=True)
         dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250)
         board = cv2.aruco.CharucoBoard(
             size=board_size,
@@ -424,6 +427,8 @@ class SingleRealsense(mp.Process):
             markerLength=markerLength,
             dictionary=dictionary,
         )
+        charuco_detector = cv2.aruco.CharucoDetector(board)
+
         while not self.ready_event.is_set():
             time.sleep(0.1)
         intrinsic_matrix: np.ndarray = self.get_intrinsics()
@@ -432,29 +437,30 @@ class SingleRealsense(mp.Process):
         out: Dict[str, Any] = self.ring_buffer.get()
         colors: np.ndarray = out["color"]
         calibration_img: np.ndarray = colors.copy()
-        cv2.imshow(f"calibration_img_{self.serial_number}", calibration_img)
-        cv2.waitKey(1)
+        if visualize:
+            path = os.path.join(output_dir, f"raw_{self.serial_number}.png")
+            cv2.imwrite(path, calibration_img)
+            print(f"[{self.serial_number}] Saved raw image to {path}")
 
-        corners, ids, _ = cv2.aruco.detectMarkers(
-            image=calibration_img, dictionary=dictionary, parameters=None
+        charuco_corners, charuco_ids, marker_corners, marker_ids = (
+            charuco_detector.detectBoard(calibration_img)
         )
-        if len(corners) == 0:
+        if marker_corners is None or len(marker_corners) == 0:
             warnings.warn("No markers detected.", stacklevel=2)
             return
-
-        retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(
-            markerCorners=corners,
-            markerIds=ids,
-            image=calibration_img,
-            board=board,
-            cameraMatrix=intrinsic_matrix,
-            distCoeffs=dist_coef,
-        )
-        if charuco_corners is None:
+        if charuco_corners is None or len(charuco_corners) == 0:
             warnings.warn("No ChArUco corners detected.", stacklevel=2)
             return
 
         print("Number of corners:", len(charuco_corners))
+
+        if len(charuco_corners) < 4:
+            warnings.warn(
+                f"Only {len(charuco_corners)} corners detected, need at least 4. "
+                "Check board visibility, lighting, and focus.",
+                stacklevel=2,
+            )
+            return
 
         if visualize:
             cv2.aruco.drawDetectedCornersCharuco(
@@ -462,13 +468,15 @@ class SingleRealsense(mp.Process):
                 charucoCorners=charuco_corners,
                 charucoIds=charuco_ids,
             )
-            cv2.imshow(f"calibration_{self.serial_number}", calibration_img)
-            cv2.waitKey(1)
+            path = os.path.join(output_dir, f"charuco_{self.serial_number}.png")
+            cv2.imwrite(path, calibration_img)
+            print(f"[{self.serial_number}] Saved charuco detection to {path}")
 
-        rvec: Optional[np.ndarray] = None
-        tvec: Optional[np.ndarray] = None
-        retval, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(
-            charuco_corners, charuco_ids, board, intrinsic_matrix, dist_coef, rvec, tvec
+        retval, rvec, tvec = cv2.solvePnP(
+            board.getChessboardCorners()[charuco_ids.flatten()],
+            charuco_corners,
+            intrinsic_matrix,
+            dist_coef,
         )
         if not retval or rvec is None or tvec is None:
             warnings.warn("Pose estimation failed.", stacklevel=2)
