@@ -15,6 +15,23 @@ class VideoRecorder:
     operations such as starting, writing frames, and stopping recording.
     """
 
+    @classmethod
+    def create_h264(
+        cls,
+        fps: float,
+        codec: str = "h264",
+        input_pix_fmt: str = "bgr24",
+        crf: int = 18,
+        thread_type: str = "FRAME",
+        thread_count: int = 1,
+    ) -> "VideoRecorder":
+        """Create a VideoRecorder configured for H.264 output.
+
+        The crf, thread_type, and thread_count parameters are accepted for
+        API compatibility but are not used by the OpenCV backend.
+        """
+        return cls(fps=fps, codec=codec, input_pix_fmt=input_pix_fmt)
+
     def __init__(self, fps: float, codec: str, input_pix_fmt: str) -> None:
         """Initialize the VideoRecorder.
 
