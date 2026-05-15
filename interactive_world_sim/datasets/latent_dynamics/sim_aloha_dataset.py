@@ -43,6 +43,7 @@ def _convert_real_to_dp_replay(
     store: zarr.storage.Store,
     shape_meta: dict,
     dataset_dir: str,
+    ctrl_mode: str = "bimanual_push",
     n_workers: Optional[int] = None,
     max_inflight_tasks: Optional[int] = None,
 ) -> ReplayBuffer:
@@ -93,10 +94,21 @@ def _convert_real_to_dp_replay(
             # save lowdim data to lowedim_data_dict
             if "action" not in lowdim_data_dict:
                 lowdim_data_dict["action"] = list()
-            this_data = file["obs"]["ee_pos"][()]  # (T, 2, 4, 4)
-            action_data = np.concatenate(
-                [this_data[:, 0, :2, 3], this_data[:, 1, :2, 3]], axis=1
-            )  # (T, 4)
+            ee_pos = file["obs"]["ee_pos"][()]  # (T, N_arms, 4, 4)
+            if ctrl_mode == "bimanual_push":
+                n_arms = ee_pos.shape[1]
+                action_data = np.concatenate(
+                    [ee_pos[:, i, :2, 3] for i in range(n_arms)], axis=1
+                )  # (T, 2*N_arms)
+            elif ctrl_mode == "single_grasp":
+                joint_pos = file["obs"]["joint_pos"][()]  # (T, 7)
+                ee_xyz = ee_pos[:, 0, :3, 3]  # (T, 3)
+                gripper = joint_pos[:, -1:]  # (T, 1)
+                action_data = np.concatenate([ee_xyz, gripper], axis=1)  # (T, 4)
+            else:
+                raise NotImplementedError(
+                    f"ctrl_mode '{ctrl_mode}' is not implemented for SimAlohaDataset"
+                )
             lowdim_data_dict["action"].append(action_data)
 
             for key in rgb_keys:
@@ -231,7 +243,7 @@ def _convert_real_to_dp_replay(
 
 
 def load_replay_buffer(
-    dataset_dir: str, use_cache: bool, shape_meta: dict
+    dataset_dir: str, use_cache: bool, shape_meta: dict, ctrl_mode: str = "bimanual_push",
 ) -> ReplayBuffer:
     replay_buffer = None
     if use_cache:
@@ -248,6 +260,7 @@ def load_replay_buffer(
                         store=zarr.MemoryStore(),
                         shape_meta=shape_meta,
                         dataset_dir=dataset_dir,
+                        ctrl_mode=ctrl_mode,
                     )
                     print("Saving cache to disk.")
                     with zarr.ZipStore(cache_zarr_path) as zip_store:
@@ -267,6 +280,7 @@ def load_replay_buffer(
             store=zarr.MemoryStore(),
             shape_meta=shape_meta,
             dataset_dir=dataset_dir,
+            ctrl_mode=ctrl_mode,
         )
     return replay_buffer
 
@@ -311,8 +325,12 @@ class SimAlohaDataset(BaseImageDataset):
         else:
             raise ValueError(f"Invalid augmentation mode: {cfg.aug_mode}")
 
+        self.action_mode = cfg.action_mode if "action_mode" in cfg else "bimanual_push"
+
         train_dir = os.path.join(dataset_dir, "train")
-        self.replay_buffer = load_replay_buffer(train_dir, use_cache, shape_meta)
+        self.replay_buffer = load_replay_buffer(
+            train_dir, use_cache, shape_meta, ctrl_mode=self.action_mode
+        )
 
         rgb_keys = list()
         depth_keys = list()
@@ -405,7 +423,9 @@ class SimAlohaDataset(BaseImageDataset):
         val_dir = os.path.join(self.dataset_dir, "val")
         shape_meta = self.shape_meta
         use_cache = self.use_cache
-        val_set.replay_buffer = load_replay_buffer(val_dir, use_cache, shape_meta)
+        val_set.replay_buffer = load_replay_buffer(
+            val_dir, use_cache, shape_meta, ctrl_mode=self.action_mode
+        )
         val_mask = np.ones((val_set.replay_buffer.n_episodes,), dtype=bool)
         val_set.sampler = SequenceSampler(
             replay_buffer=val_set.replay_buffer,

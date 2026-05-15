@@ -20,6 +20,7 @@ class LatentDynExperiment(BaseLightningExperiment):
 
     compatible_datasets = dict(
         sim_aloha_dataset=SimAlohaDataset,
+        sim_robosuite_dataset=SimAlohaDataset,
         real_aloha_dataset=RealAlohaDataset,
     )
 

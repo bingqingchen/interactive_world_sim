@@ -45,7 +45,7 @@ conda activate iws
 python main.py +name=pusht_stage_2 algorithm=latent_world_model \
   experiment=exp_latent_dyn dataset=sim_aloha_dataset \
   dataset.dataset_dir=/fs/scratch/rb_bd_dlp_rng-dl01_cr_AIQ_employees/aiq103/iws/data/mujoco \
-  dataset.horizon=10 dataset.val_horizon=200 \
+  dataset.horizon=10 dataset.val_horizon=150 \
   dataset.obs_keys=[top_pov] \
   experiment.training.batch_size=96 \
   experiment.training.precision=bf16-mixed \
