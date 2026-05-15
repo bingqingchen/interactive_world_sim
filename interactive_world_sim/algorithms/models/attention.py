@@ -60,12 +60,12 @@ class Attention(nn.Module):
 
         if device_properties.major >= 8 and device_properties.minor == 0:
             print_once(
-                "A100 GPU detected, using flash attention if input tensor is on cuda"
+                "Newer GPU detected, using flash attention if input tensor is on cuda"
             )
             self.cuda_backends = [SDPBackend.FLASH_ATTENTION]
         else:
             print_once(
-                "Non-A100 GPU detected, using math or mem efficient attention if \
+                "Older GPU detected, using math or mem efficient attention if \
                     input tensor is on cuda"
             )
             self.cuda_backends = [
